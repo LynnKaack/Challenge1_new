@@ -1,0 +1,146 @@
+# Preparing
+ssh lhk@pg.stat.cmu.edu
+cd problem-bank
+cd Data/
+git pull
+
+psql
+
+CREATE SCHEMA schemaCrime;
+
+#————
+
+
+# Looking at the file
+\! head police-neighborhoods.csv
+
+# Creating the table for the neighborhoods
+CREATE TABLE schemaCrime.hoods (
+	intptlat10 numeric,
+	intptlon10 numeric,
+	hood text UNIQUE,
+	hood_no integer,
+	acres numeric,
+	sqmiles numeric
+);
+
+# move to our schema to see the relations, it is case sensitive
+set schema 'schemacrime';
+
+# Filling hoods with data
+\copy schemaCrime.hoods FROM 'police-neighborhoods.csv' DELIMITER ','  CSV HEADER;
+
+# check if the data is right
+select * from hoods;
+
+#————
+
+
+# Looking at the file
+\! head crime-base.csv
+
+# Add primary key here!
+
+CREATE TABLE schemaCrime.blotter (
+	_id numeric UNIQUE CHECK (_id is not null) PRIMARY KEY,
+	REPORT_NAME text CHECK (REPORT_NAME in ('ARREST', 'OFFENSE 2.0')) DEFAULT 'OFFENSE 2.0',
+	SECTION text,
+	DESCRIPTION text,
+	ARREST_TIME timestamp,
+	ADDRESS text,
+	NEIGHBORHOOD text,
+	ZONE integer,
+	FOREIGN KEY (NEIGHBORHOOD) 
+		REFERENCES schemaCrime.hoods (hood) ON DELETE RESTRICT
+);
+# gives me error message: ERROR:  there is no unique constraint matching given keys for referenced table "hoods”. Solution: I needed to define hood in hoods as unique
+# ran into trouble, Key (neighborhood)=(Golden Triangle/Civic Arena) is not present in table "hoods"
+
+# so I decided to do that in the second query and use this one here instead
+
+CREATE TABLE schemaCrime.blotter (
+	X_id numeric UNIQUE CHECK (X_id is not null),
+	REPORT_NAME text CHECK (REPORT_NAME in ('ARREST', 'OFFENSE 2.0')) DEFAULT 'OFFENSE 2.0',
+	SECTION text,
+	DESCRIPTION text,
+	ARREST_TIME timestamp,
+	ADDRESS text,
+	NEIGHBORHOOD text,
+	ZONE integer
+);
+
+# Final one that includes the links to neighborhoods and checks for offense restriction:
+
+CREATE TABLE schemaCrime.blotter (
+	X_id numeric UNIQUE CHECK (X_id is not null) PRIMARY KEY,
+	REPORT_NAME text CHECK (REPORT_NAME in ('ARREST', 'OFFENSE 2.0')) DEFAULT 'OFFENSE 2.0',
+	SECTION text,
+	DESCRIPTION text,
+	ARREST_TIME timestamp,
+	ADDRESS text,
+	NEIGHBORHOOD text REFERENCES schemaCrime.hoods (hood),
+	ZONE integer
+) ;
+
+
+
+#this goes into R
+# Filling the weekly crime data with the base data (only once?)
+\copy schemaCrime.blotter FROM 'crime-base.csv' DELIMITER ','  CSV HEADER;
+
+select * from schemaCrime.blotter;
+
+
+# selecting only the data we want
+CREATE TABLE schemaCrime.blotterselect (
+	X_id numeric UNIQUE,
+	REPORT_NAME text CHECK (REPORT_NAME in ('ARREST', 'OFFENSE 2.0')) DEFAULT 'OFFENSE 2.0',
+	SECTION text,
+	DESCRIPTION text,
+	ARREST_TIME timestamp,
+	ADDRESS text,
+	NEIGHBORHOOD text REFERENCES schemaCrime.hoods (hood),
+	ZONE integer
+) ;
+
+# check ilike, doesn’t worry about case
+%goldentriangle%
+concat
+
+INSERT INTO schemaCrime.blotterselect (select * from schemaCrime.blotter where REPORT_NAME ~ 'OFFENSE 2.0' AND ZONE IS NOT NULL AND NEIGHBORHOOD in (select hood from schemaCrime.hoods));
+
+
+
+# This works
+CREATE TABLE schemaCrime.blotterselect AS (select * from schemaCrime.blotter where REPORT_NAME ~ 'OFFENSE 2.0' AND ZONE IS NOT NULL AND NEIGHBORHOOD in (select hood from schemaCrime.hoods));
+# but since we want to specify the neighborhood reference thing, we do it in the two previous steps
+
+
+\copy schemaCrime.blotter TO 'weekly_crime.csv';
+
+# here we read the data again. Why do we need to go over the whole csv stuff? or are we supposed to do everything from R?
+
+
+# Selection table for crime types
+
+create table schemaCrime.crime_types (
+    SECTION text UNIQUE not null PRIMARY KEY,
+    DESCRIPTION text UNIQUE 
+);
+
+insert into schemaCrime.crime_types (SECTION, DESCRIPTION)
+       values ('3304', 'Criminal mischief'),
+              ('2709', 'Harassment'),
+              ('3502', 'Burglary'),
+              ('13(a)(16)', 'Possession of a controlled substance'),
+              ('13(a)(30)', 'Possession w/ intent to deliver'),
+              ('3701', 'Robbery'),
+              ('3921', 'Theft'),
+              ('3921(a)', 'Theft of movable property'),
+              ('3934', 'Theft from a motor vehicle'),
+              ('3929', 'Retail theft'),
+              ('2701', 'Simple assault'),
+              ('2702', 'Aggravated assault'),
+              ('2501', 'Homicide');
+
+

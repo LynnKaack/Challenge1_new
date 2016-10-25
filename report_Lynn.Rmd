@@ -1,0 +1,221 @@
+---
+title: "Crime Report"
+author: "Lynn Kaack"
+date: "October 23, 2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+options(warn=-1)
+library(knitr)
+
+library(testthat)
+library(assertthat)
+
+# Setting up the PostgreSQL connection
+library(RPostgreSQL)
+con <- dbConnect(PostgreSQL(), user="lhk", password = "0ntBNyCcuipdh8g", 
+                 dbname="lhk", host="pg.stat.cmu.edu")
+
+# Change the schema that I will access with the connection
+set.schema <- dbSendStatement(con, "set search_path to 'schemacrime';")
+
+```
+
+
+```{r, echo=FALSE}
+# Loading the data
+crime.data <- dbGetQuery(con, "select * from schemaCrime.blotter;")
+```
+
+This is a report for the week
+
+```{r, echo=FALSE}
+# Creating a function to read out the desired time frame
+
+# Defining the last week
+
+final.day <- max(as.POSIXlt(crime.data$arrest_time))
+
+first.day.finalWeek <- final.day - 60*60*24*7
+
+#format(crime.data$arrest_time, format = "%F%H")
+#as.POSIXct(crime.data$arrest_time)
+
+last.week <- crime.data[crime.data$arrest_time >= first.day.finalWeek, ]
+# looks like we don't need as.POSIXlt
+
+print(first.day.finalWeek)
+print(final.day)
+```
+
+
+
+```{r, echo=FALSE}
+
+# This function takes in the data and gives out a crime count for every week.
+# It also returns the counts sorted by input attribute. This way, we can easily see if crimes went
+# up by zone or by crime type. It also has a test.
+# It also handles a varying number of weeks.
+
+# Input: attribute of interest in for of a string (e.g. "section"), 
+#            data frame (default is the full data frame)
+# Output: data frame with counts over the weeks as rows, beginning with the most recent week
+
+crime.count.function <- function(input.attribute, input.data = crime.data){
+  # number of distinct attributes
+  #input.data[,input.attribute]
+
+  n.input.attributes <- length(unique(input.data[,input.attribute]))
+  
+
+  crime.count <- data.frame()
+  total.crime.count <- list()
+  input.attribute.crime.count <- list()
+  input.attribute.vector <- vector(length = n.input.attributes)
+
+  i=0
+  last.day <- final.day # initialize the end of the week of interest
+
+  while(final.day - 60*60*24*7*i > min(as.POSIXlt(input.data$arrest_time))){
+    i=i+1 # week counter
+    # the first day of the week of interest
+    first.day <- final.day - 60*60*24*7*i
+    total.crime.count[[i]] <- nrow(input.data[input.data$arrest_time > first.day & input.data$arrest_time <= last.day, ])
+      for(j in 1:n.input.attributes){
+        current.input.attribute <- unique(input.data[,input.attribute])[j]
+       input.attribute.vector[j] <- nrow(input.data[input.data$arrest_time > first.day & input.data$arrest_time <= last.day & input.data[,input.attribute] == current.input.attribute, ])
+       }
+  input.attribute.crime.count[[i]] <- input.attribute.vector
+
+    #print(input.data[input.data$arrest_time > first.day & input.data$arrest_time < last.day, 1])
+    last.day <- first.day
+  }
+
+  crime.count <- data.frame(t(matrix(unlist(input.attribute.crime.count), nrow = n.input.attributes)))
+  names(crime.count) <- unique(input.data[,input.attribute])
+  crime.count$total <- unlist(total.crime.count)
+
+  # A test that all of the crime input.attributes sum up to the total
+  test_that("total crimes equals to sum of input.attribute crimes",
+          expect_true(all(rowSums(crime.count[, -(n.input.attributes+1)])==crime.count$total)))
+
+  return(crime.count)
+}
+
+crime.type.count <- crime.count.function("section")
+crime.zone.count <- crime.count.function("zone")
+
+```
+
+# Overview
+
+This is the total number of crimes for every week.
+
+```{r, echo=FALSE}
+# Plot the crime count
+plot(nrow(crime.type.count):1, crime.type.count$total,  # it is recorded backwards
+     xlab="week (increasing in time)", ylab= "# of crimes total", ylim = c(0, max(crime.type.count$total))) 
+text(nrow(crime.type.count), 0, "last week", cex = 0.5)
+```
+
+
+# Crime types with high rates
+
+Here we list the crime types that had surprisingly high rates this week. We are interested if there is a crime type that is larger in the most recent week than in any of the weeks before. We list those in the table below. 
+
+```{r, echo=FALSE}
+# Load the crime types
+interesting.crime.types <- dbGetQuery(con, "select * from schemaCrime.crime_types")
+# find the max of all of the previous weeks for every column and compare it to the most recent week
+crimes.to.watch <- crime.type.count[1, crime.type.count[1,] > apply(crime.type.count[-1,],2,max)]
+
+if(ncol(crimes.to.watch)==0){print("Missing table due to no new large crime counts")}else{
+  crimes.to.watch.output <- interesting.crime.types[interesting.crime.types$section %in% names(crimes.to.watch),]
+crimes.to.watch.output$count <- as.vector(t(crimes.to.watch))
+crimes.to.watch.output$increase.over.max <- as.vector(t(crime.type.count[1, names(crimes.to.watch)] - apply(crime.type.count[-1,names(crimes.to.watch)],2,max)))
+crimes.to.watch.output$historical.average <- as.vector(t(apply(crime.type.count[-1,names(crimes.to.watch)],2,mean)))
+
+kable(crimes.to.watch.output, digits = 2, caption = "Crimes to watch this week", row.names = 0)
+}
+
+```
+
+# Historical statistics in zones
+
+In the following figure we list the number of commited crimes in every one of the six zones. The figure shows how the total number of crimes has developed over time in each zone. 
+
+```{r, echo=FALSE}
+n.zone <- length(unique(crime.data[,"zone"]))
+plot(nrow(crime.zone.count):1, crime.zone.count[, 1], 
+     ylim=c(min(crime.zone.count[, -(n.zone+1)]), max(crime.zone.count[, -(n.zone+1)])),
+     type = "l", xlab="week (increasing time)", ylab="number of crimes in zone")
+text(1.5, crime.zone.count[nrow(crime.zone.count), 1], paste("Zone ", names(crime.zone.count)[1]), cex=0.7)
+for(zone in 2:n.zone){
+  lines(nrow(crime.zone.count):1, crime.zone.count[, zone], col=zone)
+  text(1.5, crime.zone.count[nrow(crime.zone.count), zone], paste("Zone ", names(crime.zone.count)[zone]), cex=0.7)
+}
+
+```
+
+# Percentage changes
+
+We then calculate how much the current week differs from the historical averages of relevant attributes. This is a percent difference.
+
+```{r, echo=FALSE}
+# This function can give out the percent deviation of the most recent week with the historical average crime rate. It again takes an attribute like "zone" as an input.
+# Output: Vector of crime changes sorted by magnitude of increase
+sort.increase <- function(input.attribute){
+  count.attribute <- crime.count.function(input.attribute)
+  n.input.attributes <- ncol(count.attribute)-1
+   
+  # Historical average
+  hist.average <- colMeans(count.attribute[, -(n.input.attributes+1)])
+  
+  percent.deviation <- (count.attribute[1, -(n.input.attributes+1)]-hist.average)/hist.average*100
+  percent.deviation <- sort(percent.deviation, decreasing = TRUE)
+  return(percent.deviation)
+}
+
+```
+
+We see that the percent increase of the crime types over the historical average roughly matches with the table of crime types to watch, because they exeeded their historical high.
+
+```{r, echo=FALSE}
+output.frame <- data.frame("percent increase" = t(sort.increase("section")))
+names(output.frame) <- "percent increase"
+output.frame$type <- as.vector(interesting.crime.types[match(rownames(output.frame), interesting.crime.types$section),"description"])
+kable(output.frame, caption = "Percent increase of crimes types in the last week")
+```
+
+The percentage increases in the zones with respect to the historical average are the following:
+
+```{r, echo=FALSE}
+kable(sort.increase("zone"), digits=2,
+      caption = "Percent increase of crimes in the last week in each zone")
+```
+
+We compare this to the ten neighborhoods with the largest incrase in the last week
+
+```{r, echo=FALSE}
+
+output.frame <- data.frame(head(t(sort.increase("neighborhood")), n=10))
+names(output.frame) <- "percent increase"
+
+# # Match the zones with the neighborhoods
+# zones <- unique(crime.data$zone)
+# neighborhoods <- dbGetQuery(con, "select hood from schemaCrime.hoods")
+# # Match the zones with that
+neighborhoods.vector <- matrix(nrow = 10, ncol =2)
+for(i in 1:10){
+  neighborhoods.vector[i,] <- as.vector(unlist(head(crime.data[crime.data$neighborhood==rownames(output.frame)[i], c("neighborhood", "zone")], n=1)))
+}
+# neighborhoods.vector
+
+
+output.frame$zone <- as.vector(neighborhoods.vector[match(rownames(output.frame), neighborhoods.vector[,1]), 2])
+kable(output.frame, digits=2)
+
+```
