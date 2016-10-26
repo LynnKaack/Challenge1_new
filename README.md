@@ -21,4 +21,4 @@ Rscript -e "library(knitr); knit('report_Lynn.Rmd')"
 
 If we read in everything from the start, we need:
 delete from schemacrime.blotter; 
-# Not necessary anymore
+ Not necessary anymore, but it makes it better.
