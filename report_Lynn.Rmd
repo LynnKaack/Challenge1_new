@@ -197,7 +197,7 @@ kable(sort.increase("zone"), digits=2,
       caption = "Percent increase of crimes in the last week in each zone")
 ```
 
-We compare this to the ten neighborhoods with the largest incrase in the last week
+We compare this to the ten neighborhoods with the largest increase in the last week and the zones that they are in:
 
 ```{r, echo=FALSE}
 
